@@ -61,7 +61,7 @@ start() {
     return 0
   fi
   cd "\$WORK_DIR"
-  "\$BINARY" >>"\$LOG_FILE" 2>&1 &
+  nohup "\$BINARY" >>"\$LOG_FILE" 2>&1 </dev/null &
   PID=\$!
   printf '%s\n' "\$PID" >"\$PID_FILE"
   sleep 1
