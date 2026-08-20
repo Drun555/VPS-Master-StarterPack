@@ -32,6 +32,11 @@ func validEmail(value string) bool {
 	return err == nil && address.Address == value && strings.Contains(value, "@")
 }
 
+func validProfileName(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && len(value) <= 254
+}
+
 func normalizeEmail(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }

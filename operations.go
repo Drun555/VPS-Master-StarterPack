@@ -195,8 +195,8 @@ func (app *App) createUser(ctx context.Context, email string, reporter *JobRepor
 	app.operationMu.Lock()
 	defer app.operationMu.Unlock()
 	email = strings.TrimSpace(email)
-	if !validEmail(email) {
-		return fmt.Errorf("email is invalid")
+	if !validProfileName(email) {
+		return fmt.Errorf("profile name must contain between 1 and 254 bytes")
 	}
 	normalized := normalizeEmail(email)
 	state := app.store.Snapshot()

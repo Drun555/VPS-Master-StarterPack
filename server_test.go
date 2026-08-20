@@ -138,7 +138,7 @@ func TestCleanupServerHTTPStartsJobWithoutReturningSecrets(t *testing.T) {
 func TestUserHTTPCreateAndDelete(t *testing.T) {
 	app := newTestApp(t, State{Version: stateVersion, Servers: []Server{}, Users: []User{}})
 	create := httptest.NewRecorder()
-	app.Handler().ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/api/users", strings.NewReader(`{"email":"api@example.org"}`)))
+	app.Handler().ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/api/users", strings.NewReader(`{"email":"Обычное имя профиля"}`)))
 	if create.Code != http.StatusAccepted {
 		t.Fatalf("create returned %d: %s", create.Code, create.Body.String())
 	}
@@ -152,7 +152,7 @@ func TestUserHTTPCreateAndDelete(t *testing.T) {
 	}
 	waitForJob(t, createJob)
 	users := app.store.Snapshot().Users
-	if len(users) != 1 || users[0].Email != "api@example.org" {
+	if len(users) != 1 || users[0].Email != "Обычное имя профиля" {
 		t.Fatalf("user was not created: %+v", users)
 	}
 
