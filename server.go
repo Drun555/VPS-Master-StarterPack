@@ -1,0 +1,305 @@
+package main
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+//go:embed web/index.html web/assets/*
+var embeddedWeb embed.FS
+
+type App struct {
+	config      Config
+	store       *Store
+	jobs        *JobManager
+	slaves      *SlaveClient
+	operationMu sync.Mutex
+}
+
+func NewApp(config Config, store *Store) *App {
+	return &App{config: config, store: store, jobs: NewJobManager(), slaves: NewSlaveClient()}
+}
+
+func (app *App) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", app.handleIndex)
+	mux.HandleFunc("GET /assets/{name}", app.handleAsset)
+	mux.HandleFunc("GET /api/overview", app.handleOverview)
+	mux.HandleFunc("POST /api/servers", app.handleAddServer)
+	mux.HandleFunc("DELETE /api/servers/{id}", app.handleDeleteServer)
+	mux.HandleFunc("POST /api/users", app.handleAddUser)
+	mux.HandleFunc("DELETE /api/users/{id}", app.handleDeleteUser)
+	mux.HandleFunc("POST /api/users/{id}/retry", app.handleRetryUser)
+	mux.HandleFunc("POST /api/sync", app.handleFullSync)
+	mux.HandleFunc("GET /api/jobs/{id}", app.handleJob)
+	mux.HandleFunc("GET /api/jobs/{id}/events", app.handleJobEvents)
+	mux.HandleFunc("GET /subscribe/{token}", app.handleSubscription)
+	return securityHeaders(mux)
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("X-Content-Type-Options", "nosniff")
+		response.Header().Set("X-Frame-Options", "DENY")
+		response.Header().Set("Referrer-Policy", "no-referrer")
+		response.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
+		next.ServeHTTP(response, request)
+	})
+}
+
+func (app *App) handleIndex(response http.ResponseWriter, _ *http.Request) {
+	data, err := embeddedWeb.ReadFile("web/index.html")
+	if err != nil {
+		http.Error(response, "UI unavailable", http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-cache")
+	_, _ = response.Write(data)
+}
+
+func (app *App) handleAsset(response http.ResponseWriter, request *http.Request) {
+	name := request.PathValue("name")
+	if name == "" || strings.ContainsAny(name, `/\\`) {
+		http.NotFound(response, request)
+		return
+	}
+	data, err := embeddedWeb.ReadFile("web/assets/" + name)
+	if err != nil {
+		http.NotFound(response, request)
+		return
+	}
+	if strings.HasSuffix(name, ".css") {
+		response.Header().Set("Content-Type", "text/css; charset=utf-8")
+	} else if strings.HasSuffix(name, ".js") {
+		response.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	}
+	response.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = response.Write(data)
+}
+
+func (app *App) handleOverview(response http.ResponseWriter, _ *http.Request) {
+	state := app.store.Snapshot()
+	servers := make([]ServerView, 0, len(state.Servers))
+	for _, server := range state.Servers {
+		servers = append(servers, serverView(server))
+	}
+	users := make([]UserView, 0, len(state.Users))
+	for _, user := range state.Users {
+		users = append(users, userView(user, app.config.BaseURL))
+	}
+	writeJSON(response, http.StatusOK, map[string]any{"servers": servers, "users": users, "base_url": app.config.BaseURL})
+}
+
+func (app *App) handleAddServer(response http.ResponseWriter, request *http.Request) {
+	var input AddServerRequest
+	if err := decodeJSON(response, request, &input); err != nil {
+		return
+	}
+	job, err := app.jobs.Start("server_add", []string{input.PrivateKey, input.Passphrase, input.Password, input.DuckDNSToken}, func(reporter *JobReporter) error {
+		return app.provisionServer(context.Background(), input, reporter)
+	})
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleDeleteServer(response http.ResponseWriter, request *http.Request) {
+	var input struct {
+		Mode string `json:"mode"`
+	}
+	if err := decodeJSON(response, request, &input); err != nil {
+		return
+	}
+	serverID := request.PathValue("id")
+	state := app.store.Snapshot()
+	server, _ := findServer(&state, serverID)
+	if server == nil {
+		writeError(response, http.StatusNotFound, "server not found")
+		return
+	}
+	job, err := app.jobs.Start("server_delete", []string{server.SSHPrivateKey, server.SSHPassphrase, server.DuckDNSToken, server.APIPassword}, func(reporter *JobReporter) error {
+		return app.deleteServer(context.Background(), serverID, input.Mode, reporter)
+	})
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleAddUser(response http.ResponseWriter, request *http.Request) {
+	var input AddUserRequest
+	if err := decodeJSON(response, request, &input); err != nil {
+		return
+	}
+	job, err := app.jobs.Start("user_add", nil, func(reporter *JobReporter) error {
+		return app.createUser(context.Background(), input.Email, reporter)
+	})
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleDeleteUser(response http.ResponseWriter, request *http.Request) {
+	userID := request.PathValue("id")
+	state := app.store.Snapshot()
+	user, _ := findUser(&state, userID)
+	if user == nil {
+		writeError(response, http.StatusNotFound, "user not found")
+		return
+	}
+	job, err := app.jobs.Start("user_delete", nil, func(reporter *JobReporter) error {
+		return app.deleteUser(context.Background(), userID, reporter)
+	})
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleRetryUser(response http.ResponseWriter, request *http.Request) {
+	userID := request.PathValue("id")
+	job, err := app.jobs.Start("user_retry", nil, func(reporter *JobReporter) error {
+		return app.retryUser(context.Background(), userID, reporter)
+	})
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleFullSync(response http.ResponseWriter, _ *http.Request) {
+	job, err := app.jobs.Start("full_sync", nil, func(reporter *JobReporter) error {
+		return app.fullSync(context.Background(), reporter)
+	})
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleJob(response http.ResponseWriter, request *http.Request) {
+	job, exists := app.jobs.Get(request.PathValue("id"))
+	if !exists {
+		writeError(response, http.StatusNotFound, "job not found")
+		return
+	}
+	writeJSON(response, http.StatusOK, job.Snapshot())
+}
+
+func (app *App) handleJobEvents(response http.ResponseWriter, request *http.Request) {
+	job, exists := app.jobs.Get(request.PathValue("id"))
+	if !exists {
+		writeError(response, http.StatusNotFound, "job not found")
+		return
+	}
+	flusher, ok := response.(http.Flusher)
+	if !ok {
+		writeError(response, http.StatusInternalServerError, "streaming unavailable")
+		return
+	}
+	after, _ := strconv.ParseInt(request.URL.Query().Get("after"), 10, 64)
+	past, events, cancel := job.Subscribe(after)
+	defer cancel()
+	response.Header().Set("Content-Type", "text/event-stream")
+	response.Header().Set("Cache-Control", "no-cache, no-store")
+	response.Header().Set("Connection", "keep-alive")
+	for _, event := range past {
+		writeSSE(response, event)
+	}
+	flusher.Flush()
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case event, open := <-events:
+			if !open {
+				return
+			}
+			writeSSE(response, event)
+			flusher.Flush()
+		case <-keepalive.C:
+			_, _ = io.WriteString(response, ": keepalive\n\n")
+			flusher.Flush()
+		case <-request.Context().Done():
+			return
+		}
+	}
+}
+
+func (app *App) handleSubscription(response http.ResponseWriter, request *http.Request) {
+	token := request.PathValue("token")
+	state := app.store.Snapshot()
+	var user *User
+	for index := range state.Users {
+		if state.Users[index].SubscriptionToken == token {
+			user = &state.Users[index]
+			break
+		}
+	}
+	if user == nil {
+		http.NotFound(response, request)
+		return
+	}
+	links := make([]string, 0, len(state.Servers))
+	for _, server := range state.Servers {
+		link, exists := user.Links[server.ID]
+		if exists && link.Status == "ready" && link.URI != "" {
+			links = append(links, link.URI)
+		}
+	}
+	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
+	if len(links) > 0 {
+		_, _ = io.WriteString(response, strings.Join(links, "\n")+"\n")
+	}
+}
+
+func writeSSE(response http.ResponseWriter, event JobEvent) {
+	_, _ = fmt.Fprintf(response, "id: %d\ndata: %s\n\n", event.Sequence, marshalSSE(event))
+}
+
+func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
+	request.Body = http.MaxBytesReader(response, request.Body, 2*1024*1024)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeError(response, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(response, http.StatusBadRequest, "request body must contain one JSON object")
+		return fmt.Errorf("multiple JSON values")
+	}
+	return nil
+}
+
+func writeJSON(response http.ResponseWriter, status int, value any) {
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
+	response.WriteHeader(status)
+	if err := json.NewEncoder(response).Encode(value); err != nil {
+		log.Printf("encode HTTP response: %v", err)
+	}
+}
+
+func writeError(response http.ResponseWriter, status int, message string) {
+	writeJSON(response, status, map[string]string{"error": message})
+}

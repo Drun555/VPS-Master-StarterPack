@@ -1,0 +1,10 @@
+/.env
+/master.json
+/master.json.*
+/.master.json.*
+/master.log
+/master.pid
+/vps-reality-master
+/dist/
+*.exe
+*.test
