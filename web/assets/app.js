@@ -48,7 +48,7 @@ async function loadOverview() {
 function renderServers() {
   const list = $('#servers-list');
   if (!state.servers.length) {
-    list.innerHTML = '<div class="empty">Пока нет серверов. Добавьте чистую Ubuntu 24.04 VPS.</div>';
+    list.innerHTML = '<div class="empty">Пока нет серверов. Добавьте чистую Ubuntu 22.04 или 24.04 VPS.</div>';
     return;
   }
   list.innerHTML = state.servers.map(server => `

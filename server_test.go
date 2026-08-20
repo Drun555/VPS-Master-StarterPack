@@ -84,6 +84,9 @@ func TestEmbeddedUIAndClipboardFallback(t *testing.T) {
 	if javascript.Code != http.StatusOK || !strings.Contains(javascript.Body.String(), "navigator.clipboard") || !strings.Contains(javascript.Body.String(), "copy-fallback") {
 		t.Fatalf("clipboard fallback is missing from embedded UI")
 	}
+	if !strings.Contains(javascript.Body.String(), "Ubuntu 22.04 или 24.04") {
+		t.Fatal("supported Ubuntu LTS versions are missing from embedded UI")
+	}
 }
 
 func TestUserHTTPCreateAndDelete(t *testing.T) {

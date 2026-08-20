@@ -3,7 +3,7 @@
 Single-binary control plane for provisioning and managing
 [VPS Reality Slave](https://github.com/Drun555/VPS-Slave-StarterPack) servers.
 
-Master provides a Russian web interface, provisions clean Ubuntu 24.04 VPS
+Master provides a Russian web interface, provisions clean Ubuntu 22.04 or 24.04 VPS
 instances over SSH, synchronizes VLESS users through the Slave HTTPS API, and
 serves an unguessable plain-text subscription URL for every user.
 
