@@ -71,6 +71,14 @@ func TestEmbeddedUIAndClipboardFallback(t *testing.T) {
 	if index.Code != http.StatusOK || !strings.Contains(index.Body.String(), "Серверы") || !strings.Contains(index.Body.String(), "Пользователи") {
 		t.Fatalf("unexpected embedded index: %d", index.Code)
 	}
+	for _, removed := range []string{`class="topbar"`, `class="hero"`, "Синхронизировать всё"} {
+		if strings.Contains(index.Body.String(), removed) {
+			t.Fatalf("removed header content %q is still embedded", removed)
+		}
+	}
+	if !strings.Contains(index.Body.String(), "Синхронизировать пользователей") {
+		t.Fatal("user synchronization action is missing from embedded UI")
+	}
 	javascript := httptest.NewRecorder()
 	app.Handler().ServeHTTP(javascript, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	if javascript.Code != http.StatusOK || !strings.Contains(javascript.Body.String(), "navigator.clipboard") || !strings.Contains(javascript.Body.String(), "copy-fallback") {

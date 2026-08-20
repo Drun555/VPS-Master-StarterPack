@@ -158,10 +158,10 @@ async function performServerDelete(mode) {
 }
 
 async function syncAll() {
-  if (!confirm('Полная синхронизация удалит со Slave всех клиентов, которых нет в Master. Продолжить?')) return;
+  if (!confirm('Синхронизация пользователей удалит со Slave всех клиентов, которых нет в Master. Продолжить?')) return;
   try {
     const result = await api('/api/sync', { method: 'POST', body: '{}' });
-    followJob(result.job_id, 'Полная синхронизация');
+    followJob(result.job_id, 'Синхронизация пользователей');
   } catch (error) { toast(error.message); }
 }
 
