@@ -35,6 +35,7 @@ func (app *App) Handler() http.Handler {
 	mux.HandleFunc("GET /assets/{name}", app.handleAsset)
 	mux.HandleFunc("GET /api/overview", app.handleOverview)
 	mux.HandleFunc("POST /api/servers", app.handleAddServer)
+	mux.HandleFunc("POST /api/servers/cleanup", app.handleCleanupServer)
 	mux.HandleFunc("DELETE /api/servers/{id}", app.handleDeleteServer)
 	mux.HandleFunc("POST /api/users", app.handleAddUser)
 	mux.HandleFunc("DELETE /api/users/{id}", app.handleDeleteUser)
@@ -107,6 +108,22 @@ func (app *App) handleAddServer(response http.ResponseWriter, request *http.Requ
 	}
 	job, err := app.jobs.Start("server_add", []string{input.PrivateKey, input.Passphrase, input.Password, input.DuckDNSToken}, func(reporter *JobReporter) error {
 		return app.provisionServer(context.Background(), input, reporter)
+	})
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleCleanupServer(response http.ResponseWriter, request *http.Request) {
+	var input AddServerRequest
+	if err := decodeJSON(response, request, &input); err != nil {
+		return
+	}
+	redactions := []string{input.PrivateKey, input.Passphrase, input.Password, input.DuckDNSToken, app.config.SlaveUninstallURL}
+	job, err := app.jobs.Start("server_cleanup", redactions, func(reporter *JobReporter) error {
+		return app.cleanupFailedServer(context.Background(), input, reporter)
 	})
 	if err != nil {
 		writeError(response, http.StatusInternalServerError, err.Error())

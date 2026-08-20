@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,6 +23,19 @@ func TestLoadConfigFrom(t *testing.T) {
 	}
 	if config.SlaveSetupURL != defaultSlaveSetupURL {
 		t.Fatalf("unexpected default setup URL: %s", config.SlaveSetupURL)
+	}
+	if config.SlaveUninstallURL != "https://raw.githubusercontent.com/Drun555/VPS-Slave-StarterPack/main/uninstall.sh" {
+		t.Fatalf("unexpected uninstall URL: %s", config.SlaveUninstallURL)
+	}
+}
+
+func TestSiblingScriptURLPreservesAccessQuery(t *testing.T) {
+	parsed, err := url.Parse("https://example.org/custom/setup.sh?token=secret#ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := siblingScriptURL(parsed, "uninstall.sh"); got != "https://example.org/custom/uninstall.sh?token=secret" {
+		t.Fatalf("unexpected sibling URL: %s", got)
 	}
 }
 

@@ -138,6 +138,59 @@ func (app *App) provisionServer(ctx context.Context, request AddServerRequest, r
 	return nil
 }
 
+func (app *App) cleanupFailedServer(ctx context.Context, request AddServerRequest, reporter *JobReporter) error {
+	app.operationMu.Lock()
+	defer app.operationMu.Unlock()
+
+	host, port, normalizedAddress, err := parseSSHAddress(request.Address)
+	if err != nil {
+		return err
+	}
+	domain, err := normalizeDuckDNS(request.DuckDNSURL)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(app.config.SlaveUninstallURL) == "" {
+		return fmt.Errorf("Slave uninstall URL is not configured")
+	}
+
+	credentials := []SSHCredential{{PrivateKey: request.PrivateKey, Passphrase: request.Passphrase}}
+	if request.PasswordAuth {
+		credentials = append(credentials, SSHCredential{
+			PrivateKey: request.PrivateKey, Passphrase: request.Passphrase,
+			Password: request.Password, UsePassword: true,
+		})
+	}
+
+	var clientError error
+	for index, credential := range credentials {
+		mode := "SSH-ключу"
+		if credential.UsePassword {
+			mode = "паролю"
+		}
+		reporter.Log("Подключение к root@%s по %s для удаления…", normalizedAddress, mode)
+		client, fingerprint, dialErr := dialSSH(ctx, host, port, credential, "")
+		if dialErr != nil {
+			clientError = dialErr
+			if index+1 < len(credentials) {
+				reporter.Warning("Подключение по ключу не удалось; пробуем исходный пароль.")
+			}
+			continue
+		}
+		reporter.Log("SSH host key принят по TOFU: %s", fingerprint)
+		defer client.Close()
+		command := "curl -fsSL " + shellQuote(app.config.SlaveUninstallURL) + " | bash -s --" +
+			" --yes --domain " + shellQuote(domain)
+		reporter.Log("Запуск Slave uninstall.sh…")
+		if err := runSSHCommand(client, command, reporter); err != nil {
+			return fmt.Errorf("uninstall.sh завершился с ошибкой: %w", err)
+		}
+		reporter.Log("Следы неудачной установки удалены.")
+		return nil
+	}
+	return fmt.Errorf("SSH-подключение для удаления не выполнено: %w", clientError)
+}
+
 func (app *App) createUser(ctx context.Context, email string, reporter *JobReporter) error {
 	app.operationMu.Lock()
 	defer app.operationMu.Unlock()

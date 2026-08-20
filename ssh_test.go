@@ -116,6 +116,29 @@ func TestRunSSHCommandStreamsOutputAndFails(t *testing.T) {
 	}
 }
 
+func TestCleanupFailedServerOverSSH(t *testing.T) {
+	privatePEM, signer := testPrivateKey(t)
+	listener, _, closeServer := startExecSSHServer(t, signer.PublicKey(), 0)
+	defer closeServer()
+	host, portText, _ := net.SplitHostPort(listener.Addr().String())
+	app := newTestApp(t, State{Version: stateVersion, Servers: []Server{}, Users: []User{}})
+	app.config.SlaveUninstallURL = "https://example.org/uninstall.sh"
+	manager := NewJobManager()
+	job, err := manager.Start("cleanup", nil, func(reporter *JobReporter) error {
+		return app.cleanupFailedServer(context.Background(), AddServerRequest{
+			Address: net.JoinHostPort(host, portText), PrivateKey: privatePEM,
+			DuckDNSURL: "cleanup.duckdns.org",
+		}, reporter)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, job)
+	if snapshot := job.Snapshot(); snapshot.Status != "success" {
+		t.Fatalf("cleanup failed: %+v", snapshot)
+	}
+}
+
 func testPrivateKey(t *testing.T) (string, ssh.Signer) {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)

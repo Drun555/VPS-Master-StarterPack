@@ -1,11 +1,17 @@
-const state = { servers: [], users: [], activeView: 'servers' };
+const state = {
+  servers: [],
+  users: [],
+  activeView: 'servers',
+  retryServerInput: null,
+  retryPrivateKeyName: ''
+};
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 document.addEventListener('DOMContentLoaded', () => {
   $$('.tab').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
-  $('#add-server').addEventListener('click', () => $('#server-dialog').showModal());
+  $('#add-server').addEventListener('click', openNewServerDialog);
   $('#add-user').addEventListener('click', () => $('#user-dialog').showModal());
   $('#password-auth').addEventListener('change', togglePasswordFields);
   $('#server-form').addEventListener('submit', submitServer);
@@ -14,6 +20,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#delete-with-uninstall').addEventListener('click', () => performServerDelete('uninstall'));
   $('#delete-forget').addEventListener('click', () => performServerDelete('forget'));
   $('#job-close').addEventListener('click', () => $('#job-dialog').close());
+  $('#job-cleanup').addEventListener('click', cleanupFailedServer);
+  $('#job-retry').addEventListener('click', openServerRetryDialog);
   $$('.close-dialog').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
   loadOverview();
 });
@@ -48,7 +56,7 @@ async function loadOverview() {
 function renderServers() {
   const list = $('#servers-list');
   if (!state.servers.length) {
-    list.innerHTML = '<div class="empty">Пока нет серверов. Добавьте чистую Ubuntu 22.04 или 24.04 VPS.</div>';
+    list.innerHTML = '<div class="empty">Пока нет серверов. Добавьте чистую Ubuntu 22.04, 24.04 или 26.04 VPS.</div>';
     return;
   }
   list.innerHTML = state.servers.map(server => `
@@ -90,15 +98,50 @@ function togglePasswordFields() {
   $('#server-form').elements.public_key.required = enabled;
 }
 
+function openNewServerDialog() {
+  state.retryServerInput = null;
+  state.retryPrivateKeyName = '';
+  const form = $('#server-form');
+  form.reset();
+  form.elements.private_key_file.required = true;
+  $('#private-key-help').textContent = 'Ключ сохранится в master.json для последующего управления.';
+  togglePasswordFields();
+  $('#server-dialog').showModal();
+}
+
+function openServerRetryDialog() {
+  const input = state.retryServerInput;
+  if (!input) return;
+  const form = $('#server-form');
+  form.reset();
+  form.elements.address.value = input.address;
+  form.elements.passphrase.value = input.passphrase;
+  form.elements.password_auth.checked = input.password_auth;
+  form.elements.password.value = input.password;
+  form.elements.public_key.value = input.public_key;
+  form.elements.duckdns_url.value = input.duckdns_url;
+  form.elements.duckdns_token.value = input.duckdns_token;
+  form.elements.private_key_file.required = false;
+  const keyName = state.retryPrivateKeyName || 'из предыдущей попытки';
+  $('#private-key-help').textContent = `Будет повторно использован ключ ${keyName}. При необходимости выберите другой файл.`;
+  togglePasswordFields();
+  $('#job-dialog').close();
+  $('#server-dialog').showModal();
+}
+
 async function submitServer(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const file = form.elements.private_key_file.files[0];
-  if (!file) return;
   try {
+    const privateKey = file ? await file.text() : state.retryServerInput?.private_key;
+    if (!privateKey) {
+      toast('Выберите файл приватного SSH-ключа.');
+      return;
+    }
     const input = {
       address: form.elements.address.value,
-      private_key: await file.text(),
+      private_key: privateKey,
       passphrase: form.elements.passphrase.value,
       password_auth: form.elements.password_auth.checked,
       password: form.elements.password.value,
@@ -106,11 +149,35 @@ async function submitServer(event) {
       duckdns_url: form.elements.duckdns_url.value,
       duckdns_token: form.elements.duckdns_token.value
     };
+    state.retryServerInput = input;
+    state.retryPrivateKeyName = file?.name || state.retryPrivateKeyName;
     const result = await api('/api/servers', { method: 'POST', body: JSON.stringify(input) });
     $('#server-dialog').close();
     form.reset(); togglePasswordFields();
-    followJob(result.job_id, 'Установка Slave', true);
+    followJob(result.job_id, 'Установка Slave', {
+      operation: 'provision',
+      serverInput: input,
+      privateKeyName: state.retryPrivateKeyName
+    });
   } catch (error) { toast(error.message); }
+}
+
+async function cleanupFailedServer() {
+  const input = state.retryServerInput;
+  if (!input) return;
+  setJobActionsRunning();
+  try {
+    const result = await api('/api/servers/cleanup', { method: 'POST', body: JSON.stringify(input) });
+    followJob(result.job_id, 'Удаление неудачной установки', {
+      operation: 'cleanup',
+      serverInput: input,
+      privateKeyName: state.retryPrivateKeyName,
+      reuseDialog: true
+    });
+  } catch (error) {
+    toast(error.message);
+    showFailedServerActions();
+  }
 }
 
 async function submitUser(event) {
@@ -153,7 +220,7 @@ async function performServerDelete(mode) {
   if (!id) return;
   try {
     const result = await api(`/api/servers/${id}`, { method: 'DELETE', body: JSON.stringify({ mode }) });
-    followJob(result.job_id, mode === 'uninstall' ? 'Удаление Slave' : 'Удаление записи', mode === 'uninstall');
+    followJob(result.job_id, mode === 'uninstall' ? 'Удаление Slave' : 'Удаление записи');
   } catch (error) { toast(error.message); }
 }
 
@@ -179,15 +246,19 @@ async function copySubscription(id) {
   }
 }
 
-function followJob(id, title, manualCleanupOnError = false) {
+function followJob(id, title, options = {}) {
   const dialog = $('#job-dialog');
   const log = $('#job-log');
   const status = $('#job-status');
   $('#job-title').textContent = title;
-  log.textContent = '';
+  if (options.reuseDialog && dialog.open) {
+    log.textContent += `\n\n— ${title} —\n`;
+  } else {
+    log.textContent = '';
+  }
   status.textContent = 'В процессе'; status.className = 'status running';
-  $('#job-close').disabled = true;
-  dialog.showModal();
+  setJobActionsRunning();
+  if (!dialog.open) dialog.showModal();
   const source = new EventSource(`/api/jobs/${id}/events`);
   source.onmessage = event => {
     const item = JSON.parse(event.data);
@@ -197,33 +268,63 @@ function followJob(id, title, manualCleanupOnError = false) {
     }
     if (item.type === 'status') {
       source.close();
-      const failed = item.status === 'error';
-      status.textContent = failed ? 'Error' : item.status === 'success_with_warnings' ? 'Success · warning' : 'Success';
-      status.className = `status ${item.status}`;
-      if (failed && item.message) log.textContent += `\nERROR: ${item.message}\n`;
-      $('#job-close').disabled = false;
-      loadOverview();
-      if (failed && manualCleanupOnError) alert('Операция завершилась с ошибкой. Зайдите на VPS вручную и выполните /opt/vps-reality/uninstall.sh --yes.');
+      finishJob(item.status, item.message, options);
     }
   };
   source.onerror = () => {
     if (!$('#job-close').disabled) return;
     source.close();
-    pollJob(id, manualCleanupOnError);
+    pollJob(id, options);
   };
 }
 
-async function pollJob(id, manualCleanupOnError) {
+async function pollJob(id, options) {
   try {
     const job = await api(`/api/jobs/${id}`);
     $('#job-log').textContent = job.events.filter(event => event.message).map(event => `${event.type === 'warning' ? '⚠ ' : ''}${event.message}`).join('\n');
-    if (job.status === 'running') return setTimeout(() => pollJob(id, manualCleanupOnError), 1000);
-    $('#job-status').textContent = job.status === 'error' ? 'Error' : 'Success';
-    $('#job-status').className = `status ${job.status}`;
+    $('#job-log').scrollTop = $('#job-log').scrollHeight;
+    if (job.status === 'running') return setTimeout(() => pollJob(id, options), 1000);
+    finishJob(job.status, job.error, options);
+  } catch (error) {
     $('#job-close').disabled = false;
-    loadOverview();
-    if (job.status === 'error' && manualCleanupOnError) alert('Операция завершилась с ошибкой. Выполните uninstall.sh на VPS вручную.');
-  } catch (error) { toast(error.message); }
+    toast(error.message);
+  }
+}
+
+function setJobActionsRunning() {
+  $('#job-close').disabled = true;
+  $('#job-cleanup').hidden = true;
+  $('#job-retry').hidden = true;
+}
+
+function showFailedServerActions() {
+  $('#job-close').disabled = false;
+  $('#job-cleanup').hidden = false;
+  $('#job-retry').hidden = false;
+}
+
+function finishJob(statusValue, message, options) {
+  const failed = statusValue === 'error';
+  $('#job-status').textContent = failed ? 'Error' : statusValue === 'success_with_warnings' ? 'Success · warning' : 'Success';
+  $('#job-status').className = `status ${statusValue}`;
+  if (failed && message) $('#job-log').textContent += `\nERROR: ${message}\n`;
+  $('#job-close').disabled = false;
+  $('#job-cleanup').hidden = true;
+  $('#job-retry').hidden = true;
+
+  if (options.serverInput) {
+    state.retryServerInput = options.serverInput;
+    state.retryPrivateKeyName = options.privateKeyName || state.retryPrivateKeyName;
+    if (failed) {
+      showFailedServerActions();
+    } else if (options.operation === 'cleanup') {
+      $('#job-retry').hidden = false;
+    } else if (options.operation === 'provision') {
+      state.retryServerInput = null;
+      state.retryPrivateKeyName = '';
+    }
+  }
+  loadOverview();
 }
 
 function statusClass(status) { return ['error', 'partial', 'success_with_warnings'].includes(status) ? status : ''; }

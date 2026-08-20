@@ -14,12 +14,13 @@ import (
 const defaultSlaveSetupURL = "https://raw.githubusercontent.com/Drun555/VPS-Slave-StarterPack/main/setup.sh"
 
 type Config struct {
-	HomeDir       string
-	ListenAddress string
-	Port          int
-	BaseURL       string
-	CertbotEmail  string
-	SlaveSetupURL string
+	HomeDir           string
+	ListenAddress     string
+	Port              int
+	BaseURL           string
+	CertbotEmail      string
+	SlaveSetupURL     string
+	SlaveUninstallURL string
 }
 
 func loadConfig() (Config, error) {
@@ -72,15 +73,30 @@ func loadConfigFrom(path, homeDir string) (Config, error) {
 	if err != nil || parsedSetup.Scheme != "https" || parsedSetup.Host == "" {
 		return Config{}, fmt.Errorf("SLAVE_SETUP_URL must be an absolute HTTPS URL")
 	}
+	uninstallURL := siblingScriptURL(parsedSetup, "uninstall.sh")
 
 	return Config{
-		HomeDir:       homeDir,
-		ListenAddress: listenAddress,
-		Port:          port,
-		BaseURL:       baseURL,
-		CertbotEmail:  certbotEmail,
-		SlaveSetupURL: setupURL,
+		HomeDir:           homeDir,
+		ListenAddress:     listenAddress,
+		Port:              port,
+		BaseURL:           baseURL,
+		CertbotEmail:      certbotEmail,
+		SlaveSetupURL:     setupURL,
+		SlaveUninstallURL: uninstallURL,
 	}, nil
+}
+
+func siblingScriptURL(source *url.URL, name string) string {
+	copy := *source
+	index := strings.LastIndex(copy.Path, "/")
+	if index < 0 {
+		copy.Path = "/" + name
+	} else {
+		copy.Path = copy.Path[:index+1] + name
+	}
+	copy.RawPath = ""
+	copy.Fragment = ""
+	return copy.String()
 }
 
 func readEnvFile(path string) (map[string]string, error) {

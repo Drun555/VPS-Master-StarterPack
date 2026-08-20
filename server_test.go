@@ -79,13 +79,59 @@ func TestEmbeddedUIAndClipboardFallback(t *testing.T) {
 	if !strings.Contains(index.Body.String(), "Синхронизировать пользователей") {
 		t.Fatal("user synchronization action is missing from embedded UI")
 	}
+	for _, action := range []string{"Закрыть", "Выполнить удаление", "Попробовать ещё раз"} {
+		if !strings.Contains(index.Body.String(), action) {
+			t.Fatalf("failed provisioning action %q is missing", action)
+		}
+	}
 	javascript := httptest.NewRecorder()
 	app.Handler().ServeHTTP(javascript, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
 	if javascript.Code != http.StatusOK || !strings.Contains(javascript.Body.String(), "navigator.clipboard") || !strings.Contains(javascript.Body.String(), "copy-fallback") {
 		t.Fatalf("clipboard fallback is missing from embedded UI")
 	}
-	if !strings.Contains(javascript.Body.String(), "Ubuntu 22.04 или 24.04") {
+	if !strings.Contains(javascript.Body.String(), "/api/servers/cleanup") || !strings.Contains(javascript.Body.String(), "retryServerInput") {
+		t.Fatal("failed provisioning cleanup or retry behavior is missing")
+	}
+	if !strings.Contains(javascript.Body.String(), "Ubuntu 22.04, 24.04 или 26.04") {
 		t.Fatal("supported Ubuntu LTS versions are missing from embedded UI")
+	}
+	stylesheet := httptest.NewRecorder()
+	app.Handler().ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	if stylesheet.Code != http.StatusOK || !strings.Contains(stylesheet.Body.String(), "overflow-x: hidden") {
+		t.Fatal("dialog horizontal overflow protection is missing")
+	}
+}
+
+func TestCleanupServerHTTPStartsJobWithoutReturningSecrets(t *testing.T) {
+	privateKey, _ := testPrivateKey(t)
+	app := newTestApp(t, State{Version: stateVersion, Servers: []Server{}, Users: []User{}})
+	app.config.SlaveUninstallURL = "https://example.org/uninstall.sh"
+	body, err := json.Marshal(AddServerRequest{
+		Address: "127.0.0.1:1", PrivateKey: privateKey,
+		DuckDNSURL: "cleanup.duckdns.org", DuckDNSToken: "duck-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/servers/cleanup", strings.NewReader(string(body))))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("cleanup returned %d: %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "duck-secret") || strings.Contains(response.Body.String(), "PRIVATE KEY") {
+		t.Fatal("cleanup response exposed request secrets")
+	}
+	var result map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	job, exists := app.jobs.Get(result["job_id"])
+	if !exists {
+		t.Fatal("cleanup job is missing")
+	}
+	waitForJob(t, job)
+	if job.Snapshot().Kind != "server_cleanup" {
+		t.Fatalf("unexpected job kind: %s", job.Snapshot().Kind)
 	}
 }
 
