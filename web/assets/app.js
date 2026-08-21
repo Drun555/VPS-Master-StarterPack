@@ -2,6 +2,7 @@ const state = {
   servers: [],
   users: [],
   activeView: 'servers',
+  editingServerID: '',
   retryServerInput: null,
   retryPrivateKeyName: ''
 };
@@ -15,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#add-user').addEventListener('click', () => $('#user-dialog').showModal());
   $('#password-auth').addEventListener('change', togglePasswordFields);
   $('#server-form').addEventListener('submit', submitServer);
+  $('#server-name-form').addEventListener('submit', submitServerName);
   $('#user-form').addEventListener('submit', submitUser);
   $('#sync-all').addEventListener('click', syncAll);
   $('#delete-with-uninstall').addEventListener('click', () => performServerDelete('uninstall'));
@@ -59,14 +61,18 @@ function renderServers() {
     list.innerHTML = '<div class="empty">Пока нет серверов. Добавьте чистую Ubuntu 22.04, 24.04 или 26.04 VPS.</div>';
     return;
   }
-  list.innerHTML = state.servers.map(server => `
+  list.innerHTML = state.servers.map(server => {
+    const name = serverDisplayName(server);
+    return `
     <article class="card">
       <div class="card-main">
-        <div class="card-title"><strong>${escapeHTML(server.duckdns_url)}</strong><span class="status ${statusClass(server.status)}">${statusLabel(server.status)}</span></div>
-        <div class="meta">SSH: ${escapeHTML(server.address)}<br>Host key: ${escapeHTML(server.ssh_host_fingerprint || 'не сохранён')}${server.last_error ? `<br><span class="danger-text">${escapeHTML(server.last_error)}</span>` : ''}</div>
+        <div class="card-title"><strong>${escapeHTML(name)}</strong><span class="status ${statusClass(server.status)}">${statusLabel(server.status)}</span></div>
+        <div class="meta">DuckDNS: ${escapeHTML(server.duckdns_url)}<br>SSH: ${escapeHTML(server.address)}<br>Host key: ${escapeHTML(server.ssh_host_fingerprint || 'не сохранён')}${server.last_error ? `<br><span class="danger-text">${escapeHTML(server.last_error)}</span>` : ''}</div>
       </div>
-      <div class="card-actions"><button class="icon-button danger" data-delete-server="${server.id}" title="Удалить сервер">×</button></div>
-    </article>`).join('');
+      <div class="card-actions"><button class="icon-button" data-edit-server="${server.id}" title="Переименовать сервер">✎</button><button class="icon-button danger" data-delete-server="${server.id}" title="Удалить сервер">×</button></div>
+    </article>`;
+  }).join('');
+  $$('[data-edit-server]', list).forEach(button => button.addEventListener('click', () => openServerNameDialog(button.dataset.editServer)));
   $$('[data-delete-server]', list).forEach(button => button.addEventListener('click', () => deleteServer(button.dataset.deleteServer)));
 }
 
@@ -79,7 +85,7 @@ function renderUsers() {
   list.innerHTML = state.users.map(user => {
     const chips = state.servers.map(server => {
       const link = user.links?.[server.id];
-      return `<span class="link-chip ${link?.status || 'pending'}" title="${escapeHTML(link?.last_error || '')}">${escapeHTML(server.duckdns_url)} · ${linkLabel(link)}</span>`;
+      return `<span class="link-chip ${link?.status || 'pending'}" title="${escapeHTML(link?.last_error || '')}">${escapeHTML(serverDisplayName(server))} · ${linkLabel(link)}</span>`;
     }).join('');
     return `<article class="card">
       <div class="card-main"><div class="card-title"><strong>${escapeHTML(user.email)}</strong></div><div class="meta">${escapeHTML(user.subscription_url)}</div><div class="link-statuses">${chips || '<span class="link-chip">Нет серверов</span>'}</div></div>
@@ -114,6 +120,7 @@ function openServerRetryDialog() {
   if (!input) return;
   const form = $('#server-form');
   form.reset();
+  form.elements.display_name.value = input.display_name || '';
   form.elements.address.value = input.address;
   form.elements.passphrase.value = input.passphrase;
   form.elements.password_auth.checked = input.password_auth;
@@ -140,6 +147,7 @@ async function submitServer(event) {
       return;
     }
     const input = {
+      display_name: form.elements.display_name.value,
       address: form.elements.address.value,
       private_key: privateKey,
       passphrase: form.elements.passphrase.value,
@@ -159,6 +167,33 @@ async function submitServer(event) {
       serverInput: input,
       privateKeyName: state.retryPrivateKeyName
     });
+  } catch (error) { toast(error.message); }
+}
+
+function openServerNameDialog(id) {
+  const server = state.servers.find(item => item.id === id);
+  if (!server) return;
+  state.editingServerID = id;
+  const form = $('#server-name-form');
+  form.reset();
+  form.elements.display_name.value = server.display_name || '';
+  $('#server-name-dialog').showModal();
+  form.elements.display_name.focus();
+}
+
+async function submitServerName(event) {
+  event.preventDefault();
+  const id = state.editingServerID;
+  if (!id) return;
+  try {
+    await api(`/api/servers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ display_name: event.currentTarget.elements.display_name.value })
+    });
+    $('#server-name-dialog').close();
+    state.editingServerID = '';
+    await loadOverview();
+    toast('Имя сервера сохранено.');
   } catch (error) { toast(error.message); }
 }
 
@@ -208,7 +243,7 @@ async function deleteUser(id) {
 
 async function deleteServer(id) {
   const server = state.servers.find(item => item.id === id);
-  if (!server || !confirm(`Удалить сервер ${server.duckdns_url}?`)) return;
+  if (!server || !confirm(`Удалить сервер ${serverDisplayName(server)}?`)) return;
   $('#server-delete-dialog').dataset.serverId = id;
   $('#server-delete-dialog').showModal();
 }
@@ -330,5 +365,6 @@ function finishJob(statusValue, message, options) {
 function statusClass(status) { return ['error', 'partial', 'success_with_warnings'].includes(status) ? status : ''; }
 function statusLabel(status) { return ({ ready: 'Готов', partial: 'Частично', error: 'Ошибка' })[status] || status; }
 function linkLabel(link) { return !link ? 'ожидает' : ({ ready: 'готов', error: 'ошибка' })[link.status] || link.status; }
+function serverDisplayName(server) { return server?.display_name?.trim() || server?.duckdns_url || server?.address || 'Сервер'; }
 function escapeHTML(value = '') { const element = document.createElement('span'); element.textContent = value; return element.innerHTML; }
 function toast(message) { const node = $('#toast'); node.textContent = message; node.classList.add('visible'); clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.remove('visible'), 3500); }

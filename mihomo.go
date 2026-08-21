@@ -534,12 +534,14 @@ rule-providers:
 proxy-groups:
   - name: VPN
     type: select
+    default-selected: "Первый доступный"
     proxies:
       - "Первый доступный"
     use:
       - vps-reality
   - name: "Первый доступный"
     type: fallback
+    hidden: true
     use:
       - vps-reality
     url: "https://www.gstatic.com/generate_204"
@@ -563,10 +565,7 @@ func buildMihomoProvider(state State, user *User) []byte {
 		if !exists || link.Status != "ready" || link.URI == "" {
 			continue
 		}
-		name := server.DuckDNSURL
-		if name == "" {
-			name = server.Address
-		}
+		name := serverDisplayName(server)
 		usedNames[name]++
 		if usedNames[name] > 1 {
 			name = fmt.Sprintf("%s (%d)", name, usedNames[name])

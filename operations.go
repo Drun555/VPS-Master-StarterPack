@@ -10,6 +10,7 @@ import (
 )
 
 type AddServerRequest struct {
+	DisplayName  string `json:"display_name"`
 	Address      string `json:"address"`
 	PrivateKey   string `json:"private_key"`
 	Passphrase   string `json:"passphrase"`
@@ -18,6 +19,10 @@ type AddServerRequest struct {
 	PublicKey    string `json:"public_key"`
 	DuckDNSURL   string `json:"duckdns_url"`
 	DuckDNSToken string `json:"duckdns_token"`
+}
+
+type UpdateServerRequest struct {
+	DisplayName string `json:"display_name"`
 }
 
 type AddUserRequest struct {
@@ -33,6 +38,10 @@ func (app *App) provisionServer(ctx context.Context, request AddServerRequest, r
 		return err
 	}
 	domain, err := normalizeDuckDNS(request.DuckDNSURL)
+	if err != nil {
+		return err
+	}
+	displayName, err := normalizeServerDisplayName(request.DisplayName)
 	if err != nil {
 		return err
 	}
@@ -101,7 +110,7 @@ func (app *App) provisionServer(ctx context.Context, request AddServerRequest, r
 	}
 	now := time.Now().UTC()
 	server := Server{
-		ID: id, Address: normalizedAddress, SSHHost: host, SSHPort: port,
+		ID: id, DisplayName: displayName, Address: normalizedAddress, SSHHost: host, SSHPort: port,
 		SSHPrivateKey: strings.TrimSpace(request.PrivateKey), SSHPassphrase: request.Passphrase,
 		SSHHostFingerprint: fingerprint, PublicKey: publicKey,
 		DuckDNSURL: domain, DuckDNSToken: request.DuckDNSToken,

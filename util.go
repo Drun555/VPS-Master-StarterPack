@@ -37,6 +37,19 @@ func validProfileName(value string) bool {
 	return value != "" && len(value) <= 254
 }
 
+func normalizeServerDisplayName(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if len(value) > 100 {
+		return "", fmt.Errorf("server display name must not exceed 100 bytes")
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return "", fmt.Errorf("server display name must not contain control characters")
+		}
+	}
+	return value, nil
+}
+
 func normalizeEmail(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }

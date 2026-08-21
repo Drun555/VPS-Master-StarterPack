@@ -23,3 +23,15 @@ func TestValidProfileName(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeServerDisplayName(t *testing.T) {
+	if got, err := normalizeServerDisplayName("  Нидерланды  "); err != nil || got != "Нидерланды" {
+		t.Fatalf("unexpected display name %q: %v", got, err)
+	}
+	if got, err := normalizeServerDisplayName(""); err != nil || got != "" {
+		t.Fatalf("empty display name must reset the override: %q, %v", got, err)
+	}
+	if _, err := normalizeServerDisplayName("bad\nname"); err == nil {
+		t.Fatal("control characters must be rejected")
+	}
+}

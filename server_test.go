@@ -44,7 +44,7 @@ func TestOverviewDoesNotExposeSecrets(t *testing.T) {
 func TestMihomoSubscriptionAndProviders(t *testing.T) {
 	readyURI := "vless://11111111-1111-1111-1111-111111111111@one.duckdns.org:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=one.duckdns.org&fp=chrome&pbk=public-key&sid=abcd&type=tcp#Profile"
 	app := newTestApp(t, State{Version: stateVersion,
-		Servers: []Server{{ID: "one", DuckDNSURL: "one.duckdns.org"}, {ID: "two", DuckDNSURL: "two.duckdns.org"}},
+		Servers: []Server{{ID: "one", DisplayName: "Нидерланды", DuckDNSURL: "one.duckdns.org"}, {ID: "two", DuckDNSURL: "two.duckdns.org"}},
 		Users: []User{{ID: "user", SubscriptionToken: "valid-token", Links: map[string]UserLink{
 			"one": {ServerID: "one", Status: "ready", URI: readyURI},
 			"two": {ServerID: "two", Status: "error", URI: "vless://hidden"},
@@ -62,11 +62,14 @@ func TestMihomoSubscriptionAndProviders(t *testing.T) {
 		t.Fatal("profile update interval header is missing")
 	}
 	for _, expected := range []string{
+		"mode: rule",
 		"https://master.example.org/subscribe/valid-token/proxies",
 		"https://master.example.org/mihomo/direct-rules",
 		"interval: 3600",
 		`name: "Первый доступный"`,
 		"type: fallback",
+		"hidden: true",
+		`default-selected: "Первый доступный"`,
 		"RULE-SET,direct-rules,DIRECT",
 	} {
 		if !strings.Contains(response.Body.String(), expected) {
@@ -76,7 +79,7 @@ func TestMihomoSubscriptionAndProviders(t *testing.T) {
 
 	provider := httptest.NewRecorder()
 	app.Handler().ServeHTTP(provider, httptest.NewRequest(http.MethodGet, "/subscribe/valid-token/proxies", nil))
-	if provider.Code != http.StatusOK || !strings.Contains(provider.Body.String(), "type: vless") || !strings.Contains(provider.Body.String(), "public-key: \"public-key\"") {
+	if provider.Code != http.StatusOK || !strings.Contains(provider.Body.String(), `name: "Нидерланды"`) || !strings.Contains(provider.Body.String(), "type: vless") || !strings.Contains(provider.Body.String(), "public-key: \"public-key\"") {
 		t.Fatalf("unexpected proxy provider: %d %q", provider.Code, provider.Body.String())
 	}
 	if strings.Contains(provider.Body.String(), "hidden") || strings.Contains(provider.Body.String(), "vless://") {
@@ -101,6 +104,33 @@ func TestMihomoSubscriptionAndProviders(t *testing.T) {
 	app.Handler().ServeHTTP(missingProvider, httptest.NewRequest(http.MethodGet, "/subscribe/missing/proxies", nil))
 	if missingProvider.Code != http.StatusNotFound {
 		t.Fatalf("unexpected missing provider status %d", missingProvider.Code)
+	}
+}
+
+func TestUpdateServerDisplayName(t *testing.T) {
+	app := newTestApp(t, State{Version: stateVersion, Servers: []Server{{ID: "server", DuckDNSURL: "one.duckdns.org"}}, Users: []User{}})
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/servers/server", strings.NewReader(`{"display_name":"  Финляндия  "}`)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("rename returned %d: %s", response.Code, response.Body.String())
+	}
+	if got := app.store.Snapshot().Servers[0].DisplayName; got != "Финляндия" {
+		t.Fatalf("unexpected stored display name %q", got)
+	}
+	if strings.Contains(response.Body.String(), "ssh_private_key") || !strings.Contains(response.Body.String(), `"display_name":"Финляндия"`) {
+		t.Fatalf("unexpected rename response: %s", response.Body.String())
+	}
+
+	reset := httptest.NewRecorder()
+	app.Handler().ServeHTTP(reset, httptest.NewRequest(http.MethodPatch, "/api/servers/server", strings.NewReader(`{"display_name":""}`)))
+	if reset.Code != http.StatusOK || app.store.Snapshot().Servers[0].DisplayName != "" {
+		t.Fatal("display name was not reset")
+	}
+
+	missing := httptest.NewRecorder()
+	app.Handler().ServeHTTP(missing, httptest.NewRequest(http.MethodPatch, "/api/servers/missing", strings.NewReader(`{"display_name":"Name"}`)))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("unexpected missing rename status %d", missing.Code)
 	}
 }
 
@@ -131,6 +161,9 @@ func TestEmbeddedUIAndClipboardFallback(t *testing.T) {
 	}
 	if !strings.Contains(javascript.Body.String(), "/api/servers/cleanup") || !strings.Contains(javascript.Body.String(), "retryServerInput") {
 		t.Fatal("failed provisioning cleanup or retry behavior is missing")
+	}
+	if !strings.Contains(javascript.Body.String(), "data-edit-server") || !strings.Contains(javascript.Body.String(), "display_name") {
+		t.Fatal("server display name editor is missing")
 	}
 	if !strings.Contains(javascript.Body.String(), "Ubuntu 22.04, 24.04 или 26.04") {
 		t.Fatal("supported Ubuntu LTS versions are missing from embedded UI")

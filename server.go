@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"time"
 )
+
+var errServerNotFound = errors.New("server not found")
 
 //go:embed web/index.html web/assets/*
 var embeddedWeb embed.FS
@@ -36,6 +39,7 @@ func (app *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/overview", app.handleOverview)
 	mux.HandleFunc("POST /api/servers", app.handleAddServer)
 	mux.HandleFunc("POST /api/servers/cleanup", app.handleCleanupServer)
+	mux.HandleFunc("PATCH /api/servers/{id}", app.handleUpdateServer)
 	mux.HandleFunc("DELETE /api/servers/{id}", app.handleDeleteServer)
 	mux.HandleFunc("POST /api/users", app.handleAddUser)
 	mux.HandleFunc("DELETE /api/users/{id}", app.handleDeleteUser)
@@ -132,6 +136,39 @@ func (app *App) handleCleanupServer(response http.ResponseWriter, request *http.
 		return
 	}
 	writeJSON(response, http.StatusAccepted, map[string]string{"job_id": job.id})
+}
+
+func (app *App) handleUpdateServer(response http.ResponseWriter, request *http.Request) {
+	var input UpdateServerRequest
+	if err := decodeJSON(response, request, &input); err != nil {
+		return
+	}
+	displayName, err := normalizeServerDisplayName(input.DisplayName)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	serverID := request.PathValue("id")
+	var updated Server
+	err = app.store.Update(func(state *State) error {
+		server, _ := findServer(state, serverID)
+		if server == nil {
+			return errServerNotFound
+		}
+		server.DisplayName = displayName
+		server.UpdatedAt = time.Now().UTC()
+		updated = *server
+		return nil
+	})
+	if errors.Is(err, errServerNotFound) {
+		writeError(response, http.StatusNotFound, "server not found")
+		return
+	}
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, serverView(updated))
 }
 
 func (app *App) handleDeleteServer(response http.ResponseWriter, request *http.Request) {

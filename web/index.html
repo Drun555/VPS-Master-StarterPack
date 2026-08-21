@@ -41,6 +41,7 @@
     <form id="server-form" class="dialog-card">
       <div class="dialog-head"><div><p class="eyebrow">НОВЫЙ SLAVE</p><h2>Добавить сервер</h2></div><button type="button" class="icon-button close-dialog" aria-label="Закрыть">×</button></div>
       <div class="form-grid">
+        <label class="field full"><span>Отображаемое имя</span><input name="display_name" maxlength="100" placeholder="Например, Нидерланды"><small>Показывается в Master и VPN-клиентах. Можно изменить позже.</small></label>
         <label class="field full"><span>Адрес сервера</span><input name="address" placeholder="203.0.113.10 или host:2222" required></label>
         <label class="field"><span>DuckDNS URL</span><input name="duckdns_url" placeholder="node.duckdns.org" required></label>
         <label class="field"><span>DuckDNS token</span><input name="duckdns_token" type="password" autocomplete="off" required></label>
@@ -53,6 +54,14 @@
         </div>
       </div>
       <div class="dialog-actions"><button type="button" class="button secondary close-dialog">Отмена</button><button class="button primary" type="submit">Подключить и установить</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="server-name-dialog" class="dialog small">
+    <form id="server-name-form" class="dialog-card">
+      <div class="dialog-head"><div><p class="eyebrow">ИМЯ СЕРВЕРА</p><h2>Переименовать сервер</h2></div><button type="button" class="icon-button close-dialog" aria-label="Закрыть">×</button></div>
+      <label class="field"><span>Отображаемое имя</span><input name="display_name" maxlength="100" placeholder="Например, Финляндия"><small>Оставьте пустым, чтобы снова показывать DuckDNS-домен.</small></label>
+      <div class="dialog-actions"><button type="button" class="button secondary close-dialog">Отмена</button><button class="button primary" type="submit">Сохранить</button></div>
     </form>
   </dialog>
 

@@ -74,6 +74,10 @@ Each profile references two hourly-updated resources:
 - `/subscribe/<random-token>/proxies` contains that user's VLESS Reality proxies;
 - `/mihomo/direct-rules` sends `.ru` domains and 463 Russian Android package IDs to `DIRECT`.
 
-The `VPN` policy defaults to a `fallback` group named `Первый доступный`, while each individual server remains available for manual selection.
+The `VPN` policy defaults to a hidden `fallback` group named `Первый доступный`, while each individual server remains available for manual selection. Front-ends that honor Mihomo's `hidden` API field show only the outer `VPN` group.
+
+Every server also has an optional display name that can be set during provisioning or changed later in the Master UI. Empty display names fall back to the DuckDNS hostname.
+
+The generated profile explicitly sets `mode: rule`. A client may still override or restore its own operation mode after loading the profile; Mihomo has no profile directive that can prevent a front-end from doing so.
 
 The full profile also includes the `profile-update-interval: 6` response header for clients that understand it.

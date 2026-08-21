@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const stateVersion = 1
 
@@ -12,6 +15,7 @@ type State struct {
 
 type Server struct {
 	ID                 string    `json:"id"`
+	DisplayName        string    `json:"display_name,omitempty"`
 	Address            string    `json:"address"`
 	SSHHost            string    `json:"ssh_host"`
 	SSHPort            int       `json:"ssh_port"`
@@ -49,6 +53,7 @@ type UserLink struct {
 
 type ServerView struct {
 	ID                 string    `json:"id"`
+	DisplayName        string    `json:"display_name"`
 	Address            string    `json:"address"`
 	DuckDNSURL         string    `json:"duckdns_url"`
 	Status             string    `json:"status"`
@@ -76,11 +81,21 @@ type UserView struct {
 
 func serverView(server Server) ServerView {
 	return ServerView{
-		ID: server.ID, Address: server.Address, DuckDNSURL: server.DuckDNSURL,
+		ID: server.ID, DisplayName: server.DisplayName, Address: server.Address, DuckDNSURL: server.DuckDNSURL,
 		Status: server.Status, LastError: server.LastError,
 		SSHHostFingerprint: server.SSHHostFingerprint,
 		CreatedAt:          server.CreatedAt, UpdatedAt: server.UpdatedAt,
 	}
+}
+
+func serverDisplayName(server Server) string {
+	if name := strings.TrimSpace(server.DisplayName); name != "" {
+		return name
+	}
+	if server.DuckDNSURL != "" {
+		return server.DuckDNSURL
+	}
+	return server.Address
 }
 
 func userView(user User, baseURL string) UserView {
