@@ -41,26 +41,66 @@ func TestOverviewDoesNotExposeSecrets(t *testing.T) {
 	}
 }
 
-func TestSubscriptionPlainTextAndNotFound(t *testing.T) {
+func TestMihomoSubscriptionAndProviders(t *testing.T) {
+	readyURI := "vless://11111111-1111-1111-1111-111111111111@one.duckdns.org:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=one.duckdns.org&fp=chrome&pbk=public-key&sid=abcd&type=tcp#Profile"
 	app := newTestApp(t, State{Version: stateVersion,
-		Servers: []Server{{ID: "one"}, {ID: "two"}},
+		Servers: []Server{{ID: "one", DuckDNSURL: "one.duckdns.org"}, {ID: "two", DuckDNSURL: "two.duckdns.org"}},
 		Users: []User{{ID: "user", SubscriptionToken: "valid-token", Links: map[string]UserLink{
-			"one": {ServerID: "one", Status: "ready", URI: "vless://first"},
+			"one": {ServerID: "one", Status: "ready", URI: readyURI},
 			"two": {ServerID: "two", Status: "error", URI: "vless://hidden"},
 		}, CreatedAt: time.Now()}},
 	})
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/subscribe/valid-token", nil))
-	if response.Code != http.StatusOK || response.Body.String() != "vless://first\n" {
+	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected subscription: %d %q", response.Code, response.Body.String())
 	}
-	if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/plain") {
+	if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/yaml") {
 		t.Fatalf("unexpected content type %s", contentType)
 	}
+	if response.Header().Get("profile-update-interval") != "6" {
+		t.Fatal("profile update interval header is missing")
+	}
+	for _, expected := range []string{
+		"https://master.example.org/subscribe/valid-token/proxies",
+		"https://master.example.org/mihomo/direct-rules",
+		"interval: 3600",
+		`name: "Первый доступный"`,
+		"type: fallback",
+		"RULE-SET,direct-rules,DIRECT",
+	} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("Mihomo config does not contain %q", expected)
+		}
+	}
+
+	provider := httptest.NewRecorder()
+	app.Handler().ServeHTTP(provider, httptest.NewRequest(http.MethodGet, "/subscribe/valid-token/proxies", nil))
+	if provider.Code != http.StatusOK || !strings.Contains(provider.Body.String(), "type: vless") || !strings.Contains(provider.Body.String(), "public-key: \"public-key\"") {
+		t.Fatalf("unexpected proxy provider: %d %q", provider.Code, provider.Body.String())
+	}
+	if strings.Contains(provider.Body.String(), "hidden") || strings.Contains(provider.Body.String(), "vless://") {
+		t.Fatal("proxy provider contains an unavailable or unconverted link")
+	}
+
+	directRules := httptest.NewRecorder()
+	app.Handler().ServeHTTP(directRules, httptest.NewRequest(http.MethodGet, "/mihomo/direct-rules", nil))
+	if directRules.Code != http.StatusOK || !strings.Contains(directRules.Body.String(), `"DOMAIN-SUFFIX,ru"`) || !strings.Contains(directRules.Body.String(), `"PROCESS-NAME,com.yandex.browser"`) {
+		t.Fatalf("unexpected direct rules: %d %q", directRules.Code, directRules.Body.String())
+	}
+	if len(directAndroidPackages) != 463 {
+		t.Fatalf("unexpected Android package count: %d", len(directAndroidPackages))
+	}
+
 	missing := httptest.NewRecorder()
 	app.Handler().ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/subscribe/missing", nil))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("unexpected missing status %d", missing.Code)
+	}
+	missingProvider := httptest.NewRecorder()
+	app.Handler().ServeHTTP(missingProvider, httptest.NewRequest(http.MethodGet, "/subscribe/missing/proxies", nil))
+	if missingProvider.Code != http.StatusNotFound {
+		t.Fatalf("unexpected missing provider status %d", missingProvider.Code)
 	}
 }
 

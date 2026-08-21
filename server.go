@@ -44,6 +44,8 @@ func (app *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{id}", app.handleJob)
 	mux.HandleFunc("GET /api/jobs/{id}/events", app.handleJobEvents)
 	mux.HandleFunc("GET /subscribe/{token}", app.handleSubscription)
+	mux.HandleFunc("GET /subscribe/{token}/proxies", app.handleProxyProvider)
+	mux.HandleFunc("GET /mihomo/direct-rules", app.handleDirectRules)
 	return securityHeaders(mux)
 }
 
@@ -262,31 +264,43 @@ func (app *App) handleJobEvents(response http.ResponseWriter, request *http.Requ
 }
 
 func (app *App) handleSubscription(response http.ResponseWriter, request *http.Request) {
-	token := request.PathValue("token")
 	state := app.store.Snapshot()
-	var user *User
-	for index := range state.Users {
-		if state.Users[index].SubscriptionToken == token {
-			user = &state.Users[index]
-			break
-		}
-	}
+	user := userBySubscriptionToken(&state, request.PathValue("token"))
 	if user == nil {
 		http.NotFound(response, request)
 		return
 	}
-	links := make([]string, 0, len(state.Servers))
-	for _, server := range state.Servers {
-		link, exists := user.Links[server.ID]
-		if exists && link.Status == "ready" && link.URI != "" {
-			links = append(links, link.URI)
+	response.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("profile-update-interval", "6")
+	_, _ = response.Write(buildMihomoConfig(app.config.BaseURL, user.SubscriptionToken))
+}
+
+func (app *App) handleProxyProvider(response http.ResponseWriter, request *http.Request) {
+	state := app.store.Snapshot()
+	user := userBySubscriptionToken(&state, request.PathValue("token"))
+	if user == nil {
+		http.NotFound(response, request)
+		return
+	}
+	response.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
+	_, _ = response.Write(buildMihomoProvider(state, user))
+}
+
+func (app *App) handleDirectRules(response http.ResponseWriter, _ *http.Request) {
+	response.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-store")
+	_, _ = response.Write(buildDirectRules())
+}
+
+func userBySubscriptionToken(state *State, token string) *User {
+	for index := range state.Users {
+		if state.Users[index].SubscriptionToken == token {
+			return &state.Users[index]
 		}
 	}
-	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	response.Header().Set("Cache-Control", "no-store")
-	if len(links) > 0 {
-		_, _ = io.WriteString(response, strings.Join(links, "\n")+"\n")
-	}
+	return nil
 }
 
 func writeSSE(response http.ResponseWriter, event JobEvent) {

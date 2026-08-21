@@ -63,8 +63,17 @@ restart Master immediately.
   duplicates, and removes all Slave clients absent from Master.
 - No periodic or startup synchronization runs automatically.
 
-Subscription responses are plain text with one `vless://` URI per line:
+Subscription responses are complete Mihomo YAML profiles:
 
 ```text
 https://vpn.example.org/subscribe/<random-token>
 ```
+
+Each profile references two hourly-updated resources:
+
+- `/subscribe/<random-token>/proxies` contains that user's VLESS Reality proxies;
+- `/mihomo/direct-rules` sends `.ru` domains and 463 Russian Android package IDs to `DIRECT`.
+
+The `VPN` policy defaults to a `fallback` group named `Первый доступный`, while each individual server remains available for manual selection.
+
+The full profile also includes the `profile-update-interval: 6` response header for clients that understand it.
