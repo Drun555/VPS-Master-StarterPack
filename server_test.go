@@ -88,7 +88,7 @@ func TestMihomoSubscriptionAndProviders(t *testing.T) {
 
 	directRules := httptest.NewRecorder()
 	app.Handler().ServeHTTP(directRules, httptest.NewRequest(http.MethodGet, "/mihomo/direct-rules", nil))
-	if directRules.Code != http.StatusOK || !strings.Contains(directRules.Body.String(), `"DOMAIN-SUFFIX,ru"`) || !strings.Contains(directRules.Body.String(), `"PROCESS-NAME,com.yandex.browser"`) {
+	if directRules.Code != http.StatusOK || !strings.Contains(directRules.Body.String(), `"DOMAIN-SUFFIX,ru"`) || !strings.Contains(directRules.Body.String(), `"DOMAIN-SUFFIX,2ip.io"`) || !strings.Contains(directRules.Body.String(), `"PROCESS-NAME,com.yandex.browser"`) {
 		t.Fatalf("unexpected direct rules: %d %q", directRules.Code, directRules.Body.String())
 	}
 	if len(directAndroidPackages) != 463 {

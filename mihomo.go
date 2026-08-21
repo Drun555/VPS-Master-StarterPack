@@ -583,6 +583,7 @@ func buildDirectRules() []byte {
 	var output bytes.Buffer
 	output.WriteString("payload:\n")
 	fmt.Fprintf(&output, "  - %s\n", yamlQuote("DOMAIN-SUFFIX,ru"))
+	fmt.Fprintf(&output, "  - %s\n", yamlQuote("DOMAIN-SUFFIX,2ip.io"))
 	for _, packageName := range directAndroidPackages {
 		fmt.Fprintf(&output, "  - %s\n", yamlQuote("PROCESS-NAME,"+packageName))
 	}
